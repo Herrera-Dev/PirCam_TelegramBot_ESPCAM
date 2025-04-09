@@ -1,0 +1,4 @@
+# Ignorar todas las carpetas ocultas
+.*/
+# Ignorar archivos
+PIR_CAM_Telegram (copia).txt
