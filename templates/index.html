@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Monitor de Cámara en Red</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #1f1f1f;
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 2em;
+        }
+
+        #descrip {
+            width: 620px;
+            margin: 5px 0 0;
+            font-size: 1em;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: Arial, sans-serif;
+            letter-spacing: 1px;
+            font-size: 15px;
+        }
+
+        p {
+            margin-top: 0.3em;
+            margin-bottom: 0.3em;
+        }
+
+        #video {
+            width: 640px;
+            height: 480px;
+            background: #000;
+            border: 2px solid #333;
+            border-radius: 8px;
+        }
+
+        #pipBtn,
+        #saveBtn,
+        #fsBtn {
+            margin-top: 10px;
+            padding: 10px 20px;
+            font-size: 1em;
+            cursor: pointer;
+            background-color: #1e88e5;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+
+        #pipBtn:hover {
+            background-color: #1565c0;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>Monitor de Cámara en Red</h1>
+
+    </header>
+
+    <video id="video" autoplay muted playsinline></video>
+    <div id="descrip">
+        <p>* Streaming desde la ESP32-CAM IP: <a href="http://{{ esp32_ip }}" style="color: white"
+                target="_blank">http://{{esp32_ip}}</a></p>
+        <p>* Conexion disponible desde: {{tipo_host}}</p>
+    </div>
+    <div style="margin-top: 10px;">
+        <button id="pipBtn">🎈 Ventana flotante</button>
+        <button id="fsBtn">📺 Pantalla completa</button>
+        <button id="saveBtn">📸 Capturar fotograma</button>
+    </div>
+
+    <script>
+        const video = document.getElementById("video");
+        const pipBtn = document.getElementById("pipBtn");
+
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        canvas.width = 640;
+        canvas.height = 480;
+
+        // const img = new Image();
+        // img.crossOrigin = "anonymous";
+        // img.src = "{{ host_url }}stream";
+        // img.onload = () => console.log("stream ready");
+
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = `${window.location.origin}/stream`;
+
+        img.onerror = function () {
+            console.error("Error cargando stream. Reintentando...");
+            setTimeout(() => img.src = `${window.location.origin}/stream?t=${Date.now()}`, 1000);
+        };
+
+        setInterval(() => {
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        }, 100);
+
+        video.srcObject = canvas.captureStream();
+        const fsBtn = document.getElementById("fsBtn");
+        const saveBtn = document.getElementById("saveBtn");
+
+        // Pantalla picture-in-picture
+        pipBtn.addEventListener("click", async () => {
+            try {
+                if (document.pictureInPictureElement) {
+                    await document.exitPictureInPicture();
+                } else {
+                    await video.requestPictureInPicture();
+                }
+            } catch (err) {
+                console.error("Error al activar PiP:", err);
+            }
+        });
+
+        // Pantalla completa
+        fsBtn.addEventListener("click", () => {
+            if (!document.fullscreenElement) {
+                video.requestFullscreen().catch(err => {
+                    console.error("No se pudo activar pantalla completa:", err);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        // Captura de fotograma
+        saveBtn.addEventListener("click", () => {
+            const link = document.createElement("a");
+            link.href = canvas.toDataURL("image/png");
+            link.download = "fotograma.png";
+            link.click();
+        });
+    </script>
+</body>
+
+</html>
