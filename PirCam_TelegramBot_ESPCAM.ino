@@ -1,8 +1,4 @@
 
-/*-----
-  Proyecto base para capturar fotos: https://RandomNerdTutorials.com/telegram-esp32-cam-photo-arduino/
-*/
-
 #define WDT 0          // Funcionamiento del WatchDog.
 #define TIEMP_MOV_F 1  // El tiempo de movimiento manejamos de forma manual o por el pontenciometro del PIR.
 #define RESET_NVC 0    // Limpiar la memoria NVC.
@@ -23,7 +19,7 @@
 #include "config_OTA.hpp"
 #endif
 
-#include <Arduino.h>
+#include "esp_system.h"
 #include <WiFi.h>
 #include "esp_timer.h"
 #include "fb_gfx.h"
@@ -39,6 +35,15 @@
 #include <WiFiManager.h>
 #include <Ticker.h>
 #include "pines_cam.h"
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+  uint8_t temprature_sens_read();
+#ifdef __cplusplus
+}
+#endif
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char *_STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -60,7 +65,7 @@ const char *hostpass = "12345678";
 const int BOT_MTBS = 2400;          // mSeg.
 const int RETRASO_FOT = 600;        // mSeg.
 const int ESPERAR_MOV_FIJO = 15000; // mSeg. Tiempo de espera antes de detectar nuevo mov.
-const float CALIBRACION_BAT = 0.20; // mayor CALIBRACION_BAT +voltaje
+const float CALIBRACION_BAT = 0.20; // mas voltaje
 const byte FPS_VIDEO = 7;           // Emular limitacion de FPS (~10fps = 100ms)
 
 const int tPanico = 60;  // Reinciar en caso de congelarse mas de 60 seg. via Watchdog.
@@ -139,8 +144,8 @@ void getDatos()
       alertaLED();
     }
     digitalWrite(pinLed, LOW);
-    usrActivo = usuarios[0].estado || usuarios[1].estado;
   }
+  usrActivo = usuarios[0].estado || usuarios[1].estado;
 }
 void setBool(const char *d, bool v)
 {
@@ -625,6 +630,9 @@ static esp_err_t stream_handler(httpd_req_t *req)
     if (!fb)
     {
       Serial.println(F("Camera capture failed"));
+#if DEPURACION_T
+      EnviarTelnet("Camera capture failed");
+#endif
       res = ESP_FAIL;
       break;
     }
@@ -637,6 +645,9 @@ static esp_err_t stream_handler(httpd_req_t *req)
       if (!jpeg_converted)
       {
         Serial.println(F("JPEG compression failed"));
+#if DEPURACION_T
+        EnviarTelnet("JPEG compression failed");
+#endif
         res = ESP_FAIL;
         break;
       }
@@ -728,14 +739,14 @@ void stopCameraServer()
 
 String TomarFoto(bool x = false)
 {
-  String tiempo = String(emReloj) + hActual();
-  x ? tiempo + String(emDorm) : tiempo;
+  String tiempo = "⏰ " + hActual();
+  x ? String("😴") + tiempo : tiempo;
 
   String getAll = "";
   String getBody = "";
 
   bool fot = false;
-  camera_fb_t *fb = NULL; // Deseche la primera imagen por mala calidad.
+  camera_fb_t *fb = NULL;
   fb = esp_camera_fb_get();
   esp_camera_fb_return(fb); // deshacerse de la imagen almacenada en el buffer
 
@@ -743,20 +754,21 @@ String TomarFoto(bool x = false)
   delay(RETRASO_FOT);
   digitalWrite(pinLed, HIGH);
   fb = NULL;
-  for (uint8_t i = 0; i < 2; i++)
-  {                           // Intentar sacar otra foto si falla.
+
+  for (uint8_t i = 0; i < 2; i++) // Intentar sacar otra foto si falla.
+  {
     fb = esp_camera_fb_get(); // Sacar la foto.
-    if (fb)
-    { // Capturo la foto bien?
+    if (fb)                   // Capturo la foto bien?
+    {
       fot = true;
       break;
     }
-    else
-    { // Error al sacar la foto.
+    else // Error al sacar la foto.
+    {
       esp_camera_fb_return(fb);
       fb = NULL;
     }
-    delay(300);
+    delay(100);
   }
 
   digitalWrite(pinLed, LOW);
@@ -765,39 +777,42 @@ String TomarFoto(bool x = false)
     digitalWrite(pinLed, HIGH);
   }
 
-  if (alertMov)
-  { // MOVIMIENTO DETECTADO
+  if (alertMov) // MOVIMIENTO DETECTADO
+  {
     for (uint8_t i = 0; i < 2; i++)
     {
       if (usuarios[i].estado)
       {
-        bot.sendMessage(usuarios[i].id, "MOVIMIENTO DETECTADO 🔊", "");
+        if (client_active)
+        {
+          tiempo += " - 🔊 MOV. DETECTADO";
+        }
+        else
+        {
+          bot.sendMessage(usuarios[i].id, "MOVIMIENTO DETECTADO 🔊", "");
+        }
+
         if (!fot)
         {
           bot.sendMessage(usuarios[i].id, "Fallo la captura de la camara", "");
-          // Serial.println(F("Fallo la captura de la camara"));
         }
       }
     }
     alertMov = false;
   }
-  else
-  { // ORDEN DE SACAR FOTO
+  else // ORDEN DE SACAR FOTO
+  {
     for (uint8_t i = 0; i < 2; i++)
     {
-      if (solicFot[i])
+      if (solicFot[i] && !fot)
       {
-        if (!fot)
-        {
-          bot.sendMessage(usuarios[i].id, "Fallo la captura de la camara", "");
-          // Serial.println(F("Fallo la captura de la camara"));
-        }
+        bot.sendMessage(usuarios[i].id, "Fallo la captura de la camara", "");
       }
     }
   }
   delay(100);
 
-  if (clientTCP.connect(myDomain, 443) && fot)
+  if (clientTCP.connect(myDomain, 443) && fot) // En base a : https://RandomNerdTutorials.com/telegram-esp32-cam-photo-arduino/
   {
     String head;
     String tail;
@@ -838,9 +853,9 @@ String TomarFoto(bool x = false)
       }
     }
     esp_camera_fb_return(fb);
-    // Serial.println(F("Foto enviada."));
+    Serial.println(F("Foto enviada."));
 
-    int waitTime = 5000; // tiempo de espera de 5 segundos
+    int waitTime = 4000; // tiempo de espera de 4 segundos
     long startTimer = millis();
     boolean state = false;
 
@@ -881,7 +896,7 @@ String TomarFoto(bool x = false)
     for (uint8_t i = 0; i < 2; i++)
     {
       if (usuarios[i].estado || solicFot[i])
-        bot.sendMessage(String(usuarios[i].id), "Hubo un error de la API o de la camara.", "");
+        bot.sendMessage(String(usuarios[i].id), "Error de API o camara.", "");
     }
   }
   solicFot[0] = false;
@@ -927,7 +942,6 @@ void botTelegram(int newMsj)
     {
       ultimoMsjBot = bot.messages[0].message_id;
       bot.sendMessage(chat_id, estadoAct(usrAct), "");
-      // bot.sendMessage(usuarios[0].id, String(ESP.getHeapSize() / 1024) + " - " + String(ESP.getFreeHeap() / 1024), "");
       continue;
     }
 
@@ -940,7 +954,7 @@ void botTelegram(int newMsj)
       }
 
       usuarios[usrAct].estado = !usuarios[usrAct].estado;
-      usrActivo = (usuarios[0].estado || usuarios[1].estado) ? true : false;
+      usrActivo = usuarios[0].estado || usuarios[1].estado;
 
       memoria.begin("memory", false);
       memoria.putBytes("users", usuarios, sizeof(usuarios));
@@ -1177,7 +1191,7 @@ void sensorMovimientoFijo()
   static unsigned long tAntMov = millis();
   if (digitalRead(pinPir) && !movimiento)
   {
-    // Serial.println(F("MOVIMIENTO DETECTADO!"));
+    Serial.println(F("MOVIMIENTO DETECTADO!"));
     movimiento = true;
     alertMov = true;
     enviarFoto = true;
@@ -1338,8 +1352,8 @@ int bateria(double vol)
 
 void temperatura()
 {
-  float temp = temperatureRead();
-  if (temp > 110)
+  float temp = (temprature_sens_read() - 32) / 1.8;
+  if (temp > 115)
   {
     for (uint8_t i = 0; i < 2; i++)
     {
@@ -1459,7 +1473,7 @@ void setup()
   configCamara();
 
   uint8_t n = 0;
-  String h;
+  String h, txt;
   esp_sleep_wakeup_cause_t causaReset = esp_sleep_get_wakeup_cause(); // función en el ESP32 que permite verificar la causa que despertó al dispositivo
   switch (causaReset)
   {
@@ -1497,11 +1511,12 @@ void setup()
       (apagadoAuto && x && !apagadoMan) ? mod_apagado(3680) : mod_apagado(600);
     }
 
+    txt = eventosError();
     for (uint8_t i = 0; i < 2; i++)
     {
       if (strlen(usuarios[i].id) > 9)
       {
-        bot.sendMessage(usuarios[i].id, bienv2, "");
+        bot.sendMessage(usuarios[i].id, bienv2 + txt, "");
       }
     }
     bateria(voltaje());
@@ -1529,11 +1544,13 @@ void setup()
     {
       mod_dormir();
     }
+
+    txt = eventosError();
     for (uint8_t i = 0; i < 2; i++)
     {
       if (strlen(usuarios[i].id) > 9)
       {
-        bot.sendMessage(usuarios[i].id, bienv2, "");
+        bot.sendMessage(usuarios[i].id, bienv2 + txt, "");
       }
     }
     break;
@@ -1561,7 +1578,7 @@ void setup()
     setBool("modDormir", modAhorro = false);
     nuevosMsj(false);
 
-    String txt = eventosError();
+    txt = eventosError();
     for (uint8_t i = 0; i < 2; i++)
     {
       if (strlen(usuarios[i].id) > 9)
