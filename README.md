@@ -1,6 +1,6 @@
 # ESP32-CAM con TelegramBot
 
-Consiste en un sistema de monitoreo de seguridad basado en un **ESP32-CAM**, que interactúa con un bot de **Telegram**. El dispositivo captura fotos usando la cámara integrada y las envía a los usuarios registrados cuando detecta movimiento mediante un sensor PIR. Además, tiene múltiples funcionalidades controlables a través de Telegram, como **activar o desactivar el modo de vigilancia**, **tomar fotos bajo demanda**, **transmitir video en la red local** o **controlar el modo de ahorro de energía.**
+Consiste en un sistema de monitores de seguridad basado en un **ESP32-CAM**, que interactúa con un bot de **Telegram**. El dispositivo captura fotos usando la cámara integrada y las envía a los usuarios registrados cuando detecta movimiento mediante un sensor PIR. Además, tiene múltiples funcionalidades controlables a través de Telegram, como **activar o desactivar el modo de vigilancia**, **tomar fotos bajo demanda**, **transmitir video en la red local** o **controlar el modo de ahorro de energía.**
 
 > ⚠️ Al encenderse, la ESP32-CAM intenta cargar las configuraciones almacenadas. Si no encuentra el **token del bot**, las **credenciales Wi-Fi** o al menos **un usuario**, entra en modo configuración usando **WiFiManager** para obtener estos datos para obtenerlos.
 
@@ -8,7 +8,7 @@ Consiste en un sistema de monitoreo de seguridad basado en un **ESP32-CAM**, que
   <img src="/imagenes/Screenshot_0.jpg" alt="Foto" width="700">
 </p>
 
-## 🛠️ Configuracion del Entorno
+## 🛠️ Configuración del Entorno
 ### Software
 - **IDE:** Arduino `v1.8.x` o `v2.3.x`
 - **Framework:** Arduino ESP32 `v3.0.4`
@@ -71,44 +71,45 @@ void loop() {
 
 ---
 
-## 🌐 Caracteristicas del Bot de Telegram
+## 🌐 Características del Bot de Telegram
 
 | **Comando**                        | **Descripción** |
 |-----------------------------------|-----------------|
-| `/estado`                         | Muestra el estado del sistema: <ul><li>Hora actual y número de usuarios en vigilancia</li><li>Estado del dispositivo (ON/OFF)</li><li>Modo vigilancia (ON/OFF)</li><li>Modo ahorro de energía (ON/OFF)</li><li>Alerta de duración del movimiento (ON/OFF)</li><li>Apagado automático (ON/OFF)</li><li>Temperatura interna *(sensor no confiable)*</li><li>Intensidad de la señal WiFi</li><li>Tipo de alimentación (externa o batería)</li></ul> |
+| `/estado`                         | Muestra el estado del sistema: <ul><li>Hora actual y número de usuarios en vigilancia</li><li>Estado del dispositivo (ON/OFF)</li><li>Modo vigilancia (ON/OFF)</li><li>Modo ahorro de energía (ON/OFF)</li><li>Alerta de duración del movimiento (ON/OFF)</li><li>Apagado automático (ON/OFF)</li><li>Temperatura interna *(SENSOR INTERNO NO CONFIABLE)*</li><li>Intensidad de la señal WiFi</li><li>Tipo de alimentación (externa o batería)</li></ul> |
 | `/VIGILAR` / `/NO-VIGILAR`        | Activa o desactiva el modo vigilancia. Envía foto al detectar movimiento. |
 | `/foto`                           | Solicita una foto en cualquier momento. |
 | `/APAGAR` / `/ENCENDER`           | Apaga o enciende el dispositivo. Usa *deep sleep* al apagarse. |
 | `/modDormido` / `/modDespierto`   | Activa o desactiva el modo ahorro de energía (deep sleep con PIR). |
-| `/iniciarVideo` / `/pararVideo`   | Inicia o detiene la transmisión de video en atravez de su red local: [http://espcam-bot](http://espcam-bot) --> [VER IMAGEN](imagenes/Screenshot_5.jpg)|
+| `/iniciarVideo` / `/pararVideo`   | Iniciar o detener la transmisión de video a través de su red local: [http://espcam-bot.local](http://espcam-bot.local) --> [VER IMAGEN](imagenes/Screenshot_5.jpg)|
 | `/comandos`                       | Muestra comandos adicionales y alerta LED:<ul><li>`/alertDura`: ON/OFF – LED se mantiene encendido con movimiento.</li><li>`/apagAuto`: ON/OFF – Apagado automático nocturno.</li><li>`/configOTA`: Activar OTA (solo admin).</li><li>`/configDatos`: Reinicia para reconfigurar con WiFiManager (solo admin).</li><li>`/reiniciar`: Reinicia la ESP32-CAM.</li></ul> |
 
   ```c
   💡 INFORMACION DEL LED
-  - Parpadeo_Rapido: Esta en modo configuracion o error de acceso a la memoria.
+  - Parpadeo_Rapido: Esta en modo configuración o error de acceso a la memoria.
   - Parpadeo_Normal: Calibrando sensor luego de iniciar.
   - Un Parpadeo: Captura una foto.
   - Encendido: Cuando se detecta movimiento (solo si esta activado la opcion `/alertDura`).
   ```
 
-- **Alerta de batería**: Notificar si la batería baja por debajo del 15% cuando se esta usando como fuente de alimentacion la bateria.
-- **Lentitud con el bot**: Cuando esta en modo-vigilar notificar si el bot tarda en verificar la existencia de nuevos mensajes y eso genera un retraso en cada interaccion.
-- **Sobrecalentamiento**: Notificar cuando el sensor interno de temperatura alcance un umbral definido, (**Cabe aclarar que el sensor interno de la ESP32 no es confiable**)
+- **Alerta de batería**: Notificar si la batería baja por debajo del 15% cuando se esta usando la batería como fuente de alimentacion.
+- **Lentitud con el bot**: Cuando esta en modo-vigilar notificar si el bot tarda en verificar la existencia de nuevos mensajes y eso genera un retraso en cada interacción.
+- **Sobrecalentamiento**: Notificar cuando el sensor interno de temperatura alcance un umbral definido, (**CABE ACLARAR QUE EL SENSOR INTERNO DE ESTA ESP32 NO ES CONFIABLE**) recomendación usar usar un sensor externo.
 > ⚠️ Las mensajes de posible fallo se muestra en los **mensajes de bienvenida** o en el **portal de WifiManager**.
 
 ### Calidad de imagen y video
-La **calidad de las imagenes** se debe cambiar desde `void configCamara()` mayor calidad mayor consumo.
+La **calidad de las imagenes** se debe cambiar desde `void configCamara()` mayor calidad y tamaño de imagen significa mayor consumo electrico y menor rendimiento de la esp32-cam.
 
 ```c
-config.frame_size = FRAMESIZE_VGA; // FRAMESIZE_ + QVGA|CIF|VGA|SVGA|XGA|SXGA|UXGA
-config.jpeg_quality = 30;          // 0-63 un número más bajo significa mayor calidad  
+config.frame_size = FRAMESIZE_VGA; // FRAMESIZE_ + QVGA|CIF|VGA|SVGA|XGA|SXGA|UXGA 
+config.jpeg_quality = 30;          // 0-63 un número más bajo significa mayor calidad de imagen.
 ```
 
 ### Funciones Dev
-
-- **Depuración Remota con TelnetStream:** Incorpora la librería TelnetStream, que permite realizar la depuración del dispositivo de forma remota a través de la red Wi-Fi mediante una conexión Telnet. Esto resulta especialmente útil para analizar el comportamiento del dispositivo en tiempo real sin necesidad de una conexión física al puerto serial, ideal si se requiere realizar mejoras.
+En caso de realizar modificaciones.
 
 - **Actualización OTA (Over-the-Air):** **(Aunque esta funcion ya biene integrada en WifiManager)**. El proyecto incluye la funcionalidad de actualización OTA, lo que permite cargar nuevo firmware de forma remota a través de la red Wi-Fi. Esto resulta especialmente útil en la ESP32-CAM, ya que este modelo no cuenta con un puerto USB integrado. Esta función simplifica el mantenimiento sin necesidad de acceso físico al dispositivo.
+
+- **Depuración Remota con TelnetStream:** Incorpora la librería TelnetStream, que permite realizar la depuración del dispositivo de forma remota mediante una conexión Telnet a traves de la red Wi-Fi. Esto resulta especialmente útil para analizar el comportamiento del dispositivo en tiempo real sin necesidad de una conexión física al puerto serial, ideal si se requiere realizar mejoras.
 
 ---
 
@@ -137,13 +138,14 @@ config.jpeg_quality = 30;          // 0-63 un número más bajo significa mayor 
 ---
 
 ## Script `Proxy_Video_ESP32.py`
-Este script es un servidor proxy basado en Flask que permite retransmitir el video de la ESP32-CAM a través de una interfaz web personalizado lo cual permite ver el video en **Picture-in-Picture (PiP)** --> [VER IMAGEN](imagenes/Screenshot_6.png) si no requiere esa funcion simplemente ingrese a: [http://espcam-bot](http://espcam-bot). 
+Este script es un servidor proxy en Flask para retransmitir el video de la ESP32-CAM a través de una interfaz web personalizado lo cual permite ver el video en **Picture-in-Picture (PiP)**, **Pantalla completa**, **Capturar imagen** y **Grabar video** --> [VER IMAGEN](imagenes/Screenshot_6.png) si no requiere estas funciones simplemente ingrese a: [http://espcam-bot.local](http://espcam-bot.local) o a la IP de la esp32-cam. 
 1. **Instalar Python**:
    Asegúrate de tener **Python 3.10** o superior instalado en tu sistema. Puedes descargarlo desde [python.org](https://www.python.org/).
 
 2. **Instalar las dependencias**:
-   Ejecuta el siguiente comando para instalar las librerías necesarias, flask `v3.1.x` y requests `v2.25.x`:
+   Ejecuta el siguiente comando para instalar las librerías necesarias, flask `v3.1.x` y requests `v2.25.x` y ffmpeg `v4.4.x` para video:
    ```bash
+   sudo apt install ffmpeg
    pip install flask requests
    ```
 
