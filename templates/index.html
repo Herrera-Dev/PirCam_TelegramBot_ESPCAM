@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Monitor de Cámara en Red</title>
+    <title>Monitor de Esp32-CAM</title>
     <style>
         body {
             margin: 0;
@@ -35,7 +35,6 @@
             color: white;
             padding: 8px 12px;
             border-radius: 4px;
-            font-family: Arial, sans-serif;
             letter-spacing: 1px;
             font-size: 15px;
         }
@@ -43,6 +42,12 @@
         p {
             margin-top: 0.3em;
             margin-bottom: 0.3em;
+        }
+
+        #video-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
         }
 
         #video {
@@ -53,11 +58,27 @@
             border-radius: 8px;
         }
 
+        #status-dot {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 17px;
+            height: 17px;
+            border-radius: 50%;
+            background-color: rgb(0, 255, 0);
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+            z-index: 2;
+        }
+
         #pipBtn,
         #saveBtn,
-        #fsBtn {
+        #fsBtn,
+        #grab,
+        #movimientoBtn,
+        #motionBtn {
             margin-top: 10px;
-            padding: 10px 20px;
+            padding: 10px 10px;
             font-size: 1em;
             cursor: pointer;
             background-color: #1e88e5;
@@ -67,62 +88,180 @@
             transition: background-color 0.3s;
         }
 
-        #pipBtn:hover {
+        #pipBtn:hover,
+        #saveBtn:hover,
+        #fsBtn:hover,
+        #grab:hover,
+        #movimientoBtn:hover,
+        #motionBtn:hover {
             background-color: #1565c0;
+        }
+
+        #estadoMovimiento {
+            margin-top: 8px;
+            font-size: 16px;
+            color: #00ff00;
+        }
+
+        #movimientoBtn {
+            background-color: #e53935;
+            color: white;
+        }
+
+        #movimientoBtn.activo {
+            background-color: #1e88e5;
         }
     </style>
 </head>
 
 <body>
     <header>
-        <h1>Monitor de Cámara en Red</h1>
-
+        <h1>Monitor Esp32Cam</h1>
     </header>
 
-    <video id="video" autoplay muted playsinline></video>
-    <div id="descrip">
-        <p>* Streaming desde la ESP32-CAM IP: <a href="http://{{ esp32_ip }}" style="color: white"
-                target="_blank">http://{{esp32_ip}}</a></p>
-        <p>* Conexion disponible desde: {{tipo_host}}</p>
+    <div id="video-container">
+        <video id="video" autoplay muted playsinline></video>
+        <div id="status-dot"></div>
     </div>
+
+    <div id="descrip">
+        <p>* Fuente del streaming IP: <a href="http://{{ esp32_ip }}/video" style="color: white"
+                target="_blank">http://{{esp32_ip}}/video</a></p>
+        <p>* Disponibilidad de conexion: {{tipo_host}}</p>
+    </div>
+
     <div style="margin-top: 10px;">
         <button id="pipBtn">🎈 Ventana flotante</button>
         <button id="fsBtn">📺 Pantalla completa</button>
-        <button id="saveBtn">📸 Capturar fotograma</button>
+        <button id="saveBtn">📸 Capturar</button>
+        <button id="grab" onclick="grabar()">🎬 Grabar 1 min.</button>
+        <button id="movimientoBtn">🛑 Desactivar detección</button>
     </div>
+
+    <div id="estadoGrabacion" style="margin-top: 10px;"></div>
 
     <script>
         const video = document.getElementById("video");
         const pipBtn = document.getElementById("pipBtn");
-
+        const fsBtn = document.getElementById("fsBtn");
+        const saveBtn = document.getElementById("saveBtn");
+        const movimientoBtn = document.getElementById("movimientoBtn");
+        const statusDot = document.getElementById("status-dot");
         const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
         canvas.width = 640;
         canvas.height = 480;
 
-        // const img = new Image();
-        // img.crossOrigin = "anonymous";
-        // img.src = "{{ host_url }}stream";
-        // img.onload = () => console.log("stream ready");
+        let record = false;
+        let lastAttempt = 0;
+        let backupStreamURL = "";
+        let connected = false;
+        let blink = false;
+        let lastFrame = null;
+        let unchangedFrames = 0;
+        let movimientoActivo = true;
 
         const img = new Image();
         img.crossOrigin = "anonymous";
-        img.src = `${window.location.origin}/stream`;
 
-        img.onerror = function () {
-            console.error("Error cargando stream. Reintentando...");
-            setTimeout(() => img.src = `${window.location.origin}/stream?t=${Date.now()}`, 1000);
+        function loadStream() {
+            img.src = `${window.location.origin}/stream?t=${Date.now()}`;
+            record = false;
+            console.log("arrancando");
+        }
+
+        function safeLoadStream() {
+            const now = Date.now();
+            if (now - lastAttempt > 10000 && !record) {  // mínimo 10 segundo entre intentos
+                lastAttempt = now;
+                loadStream();
+            }
+            else if (record) {
+                statusDot.style.backgroundColor = "#0000ff";
+            }
+        }
+
+        function detenerStream() {
+            backupStreamURL = img.src;
+            img.src = "";  // Detiener stream
+            record = true;
+        }
+
+        img.onload = function () {
+            if (!connected) {
+                connected = true;
+                console.log("Conectado al Stream.");
+            }
         };
 
+        img.onerror = function () {
+            connected = false;
+            console.warn("Stream perdido. Reintentando...");
+        };
+
+        loadStream();
+
+        // Animación de parpadeo solo si hay conexión
         setInterval(() => {
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        }, 100);
+            statusDot.style.opacity = blink ? 1 : 0;
+            blink = !blink;
+
+            if (connected) {
+                statusDot.style.backgroundColor = "#00ff00";
+            }
+        }, 250);
+
+        setInterval(() => {
+            if (img.complete && img.naturalWidth > 0) {
+                try {
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                    const frameData = ctx.getImageData(100, 100, 15, 15).data;
+                    const hash = Array.from(frameData).join(",");
+
+                    if (hash === lastFrame) {
+                        unchangedFrames++;
+                    } else {
+                        unchangedFrames = 0;
+                        lastFrame = hash;
+                    }
+                    connected = unchangedFrames < 20;
+                    connected = true;
+
+                } catch (e) {
+                    console.warn("No se pudo dibujar imagen:", e);
+                    statusDot.style.backgroundColor = "red";
+                    connected = false;
+                }
+            } else {
+                statusDot.style.backgroundColor = "red";
+                connected = false;
+                safeLoadStream();
+            }
+        }, 60);
 
         video.srcObject = canvas.captureStream();
-        const fsBtn = document.getElementById("fsBtn");
-        const saveBtn = document.getElementById("saveBtn");
 
-        // Pantalla picture-in-picture
+        function grabar() {
+            detenerStream();  // Detiene la vista
+            console.info("Iniciando grabacion")
+            document.getElementById("estadoGrabacion").innerText = "⏳ Grabando video...";
+
+            fetch("/grabar")
+                .then(res => res.text())
+                .then(html => {
+                    document.getElementById("estadoGrabacion").innerHTML = html;
+                    loadStream();
+                })
+                .catch(err => {
+                    console.info("Error al grabar");
+                    document.getElementById("estadoGrabacion").innerText = "❌ Error al grabar.";
+                    console.error(err);
+                    loadStream();
+                });
+        }
+
         pipBtn.addEventListener("click", async () => {
             try {
                 if (document.pictureInPictureElement) {
@@ -135,7 +274,6 @@
             }
         });
 
-        // Pantalla completa
         fsBtn.addEventListener("click", () => {
             if (!document.fullscreenElement) {
                 video.requestFullscreen().catch(err => {
@@ -146,13 +284,29 @@
             }
         });
 
-        // Captura de fotograma
         saveBtn.addEventListener("click", () => {
             const link = document.createElement("a");
             link.href = canvas.toDataURL("image/png");
             link.download = "fotograma.png";
             link.click();
         });
+
+        movimientoBtn.addEventListener("click", () => {
+            movimientoActivo = !movimientoActivo;
+            movimientoBtn.classList.toggle("activo", movimientoActivo);
+            movimientoBtn.textContent = movimientoActivo ? "🛑 Desactivar detección" : "🕵️ Activar detección";
+
+            const ruta = movimientoActivo ? "/movimiento/on" : "/movimiento/off";
+            fetch(ruta).then(() => console.log("Detección de movimiento:", movimientoActivo));
+        });
+
+        fetch("/movimiento/status")
+            .then(res => res.json())
+            .then(data => {
+                movimientoActivo = data.activo;
+                movimientoBtn.classList.toggle("activo", movimientoActivo);
+                movimientoBtn.textContent = movimientoActivo ? "🛑 Desactivar detección" : "🕵️ Activar detección";
+            });
     </script>
 </body>
 
