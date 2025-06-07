@@ -1,8 +1,4 @@
 
-/*-----
-  Proyecto base para capturar fotos: https://RandomNerdTutorials.com/telegram-esp32-cam-photo-arduino/
-*/
-
 #define WDT 0          // Funcionamiento del WatchDog.
 #define TIEMP_MOV_F 1  // El tiempo de movimiento manejamos de forma manual o por el pontenciometro del PIR.
 #define RESET_NVC 0    // Limpiar la memoria NVC.
@@ -23,7 +19,7 @@
 #include "config_OTA.hpp"
 #endif
 
-#include <Arduino.h>
+#include "esp_system.h"
 #include <WiFi.h>
 #include "esp_timer.h"
 #include "fb_gfx.h"
@@ -39,6 +35,15 @@
 #include <WiFiManager.h>
 #include <Ticker.h>
 #include "pines_cam.h"
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+  uint8_t temprature_sens_read();
+#ifdef __cplusplus
+}
+#endif
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char *_STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -60,8 +65,8 @@ const char *hostpass = "12345678";
 const int BOT_MTBS = 2400;          // mSeg.
 const int RETRASO_FOT = 600;        // mSeg.
 const int ESPERAR_MOV_FIJO = 15000; // mSeg. Tiempo de espera antes de detectar nuevo mov.
-const float CALIBRACION_BAT = 0.20; // mayor CALIBRACION_BAT +voltaje
-const byte FPS_VIDEO = 7;           // Emular limitacion de FPS (~10fps = 100ms)
+const float CALIBRACION_BAT = 0.20; // mas voltaje
+byte FPS_VIDEO = 7;                 // Emular limitacion de FPS (~10fps = 100ms  experiment)
 
 const int tPanico = 60;  // Reinciar en caso de congelarse mas de 60 seg. via Watchdog.
 const int hApagAut = 19; // PM, Apagdo automatico 19:00 horas.
@@ -94,6 +99,7 @@ bool apagadoMan = false;
 bool funcOTA = false;
 bool usrActivo = false;
 bool alertBotLent = true;
+bool invitadActive = false;
 
 byte desc = 0;
 String errorRes = "";
@@ -123,6 +129,8 @@ void getDatos()
   apagadoMan = memoria.getBool("apagadMan", false);
   funcOTA = memoria.getBool("funcOta", false);
   errorRes = memoria.getString("error", "");
+  invitadActive = memoria.getBool("invActive", false);
+  ultimoMsjBot = memoria.getInt("ultMsj", 0);
 
   memoria.getBytes("tkn", token, sizeof(token));
   size_t peopleSize = memoria.getBytes("users", usuarios, sizeof(usuarios));
@@ -139,8 +147,14 @@ void getDatos()
       alertaLED();
     }
     digitalWrite(pinLed, LOW);
-    usrActivo = usuarios[0].estado || usuarios[1].estado;
   }
+  usrActivo = usuarios[0].estado || usuarios[1].estado;
+}
+void setString(const char *err)
+{
+  memoria.begin("memory", false);
+  memoria.putString("error", err);
+  memoria.end();
 }
 void setBool(const char *d, bool v)
 {
@@ -148,10 +162,10 @@ void setBool(const char *d, bool v)
   memoria.putBool(d, v);
   memoria.end();
 }
-void setString(const char *err)
+void setInt(const char *d, int v)
 {
   memoria.begin("memory", false);
-  memoria.putString("error", err);
+  memoria.putInt(d, v);
   memoria.end();
 }
 
@@ -176,7 +190,7 @@ void configCamara()
   config.pin_sscb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
+  config.xclk_freq_hz = 15000000; // default: 20000000 20MHz
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_LATEST;
 
@@ -209,7 +223,7 @@ void configCamara()
   {
     Serial.printf("ERROR AL INICIAR LA CAMARA, ERROR: 0x%x", err);
     bot.sendMessage(usuarios[0].id, "⏳Error al iniciar la camara\nReiniciando... ⬇", "");
-    delay(3000);
+    delay(6000);
     ESP.restart();
   }
 }
@@ -461,9 +475,8 @@ void apaAutomat()
       setBool("estApag", apagado = true);
       for (uint8_t i = 0; i < 2; i++)
       {
-        if (strlen(usuarios[i].id) > 9)
+        if (strlen(usuarios[i].id) > 9 && invAct(i))
         {
-
           bot.sendMessageWithReplyKeyboard(usuarios[i].id, "Equipo APAGADO AUT.📵", "", estadoMenu(i), true);
         }
       }
@@ -625,6 +638,9 @@ static esp_err_t stream_handler(httpd_req_t *req)
     if (!fb)
     {
       Serial.println(F("Camera capture failed"));
+#if DEPURACION_T
+      EnviarTelnet("Camera capture failed");
+#endif
       res = ESP_FAIL;
       break;
     }
@@ -637,6 +653,9 @@ static esp_err_t stream_handler(httpd_req_t *req)
       if (!jpeg_converted)
       {
         Serial.println(F("JPEG compression failed"));
+#if DEPURACION_T
+        EnviarTelnet("JPEG compression failed");
+#endif
         res = ESP_FAIL;
         break;
       }
@@ -699,7 +718,7 @@ void startCameraServer()
   }
   else
   {
-    Serial.println(F("Error al arrancar el servicio"));
+    Serial.println(F("Error al arrancar el servicio."));
   }
 
   httpd_uri_t index_uri = {
@@ -728,14 +747,14 @@ void stopCameraServer()
 
 String TomarFoto(bool x = false)
 {
-  String tiempo = String(emReloj) + hActual();
-  x ? tiempo + String(emDorm) : tiempo;
+  String tiempo = "⏰ " + hActual();
+  x ? String("😴") + tiempo : tiempo;
 
   String getAll = "";
   String getBody = "";
 
   bool fot = false;
-  camera_fb_t *fb = NULL; // Deseche la primera imagen por mala calidad.
+  camera_fb_t *fb = NULL;
   fb = esp_camera_fb_get();
   esp_camera_fb_return(fb); // deshacerse de la imagen almacenada en el buffer
 
@@ -743,20 +762,21 @@ String TomarFoto(bool x = false)
   delay(RETRASO_FOT);
   digitalWrite(pinLed, HIGH);
   fb = NULL;
-  for (uint8_t i = 0; i < 2; i++)
-  {                           // Intentar sacar otra foto si falla.
+
+  for (uint8_t i = 0; i < 2; i++) // Intentar sacar otra foto si falla.
+  {
     fb = esp_camera_fb_get(); // Sacar la foto.
-    if (fb)
-    { // Capturo la foto bien?
+    if (fb)                   // Capturo la foto bien?
+    {
       fot = true;
       break;
     }
-    else
-    { // Error al sacar la foto.
+    else // Error al sacar la foto.
+    {
       esp_camera_fb_return(fb);
       fb = NULL;
     }
-    delay(300);
+    delay(100);
   }
 
   digitalWrite(pinLed, LOW);
@@ -765,39 +785,42 @@ String TomarFoto(bool x = false)
     digitalWrite(pinLed, HIGH);
   }
 
-  if (alertMov)
-  { // MOVIMIENTO DETECTADO
+  if (alertMov) // MOVIMIENTO DETECTADO
+  {
     for (uint8_t i = 0; i < 2; i++)
     {
-      if (usuarios[i].estado)
+      if (usuarios[i].estado && invAct(i))
       {
-        bot.sendMessage(usuarios[i].id, "MOVIMIENTO DETECTADO 🔊", "");
+        if (client_active)
+        {
+          tiempo += " - 🔊 MOV. DETECTADO";
+        }
+        else
+        {
+          bot.sendMessage(usuarios[i].id, "MOVIMIENTO DETECTADO 🔊", "");
+        }
+
         if (!fot)
         {
           bot.sendMessage(usuarios[i].id, "Fallo la captura de la camara", "");
-          // Serial.println(F("Fallo la captura de la camara"));
         }
       }
     }
     alertMov = false;
   }
-  else
-  { // ORDEN DE SACAR FOTO
+  else // ORDEN DE SACAR FOTO
+  {
     for (uint8_t i = 0; i < 2; i++)
     {
-      if (solicFot[i])
+      if (solicFot[i] && !fot && invAct(i))
       {
-        if (!fot)
-        {
-          bot.sendMessage(usuarios[i].id, "Fallo la captura de la camara", "");
-          // Serial.println(F("Fallo la captura de la camara"));
-        }
+        bot.sendMessage(usuarios[i].id, "Fallo la captura de la camara", "");
       }
     }
   }
   delay(100);
 
-  if (clientTCP.connect(myDomain, 443) && fot)
+  if (clientTCP.connect(myDomain, 443) && fot) // En base a : https://RandomNerdTutorials.com/telegram-esp32-cam-photo-arduino/
   {
     String head;
     String tail;
@@ -838,9 +861,9 @@ String TomarFoto(bool x = false)
       }
     }
     esp_camera_fb_return(fb);
-    // Serial.println(F("Foto enviada."));
+    Serial.println(F("Foto enviada."));
 
-    int waitTime = 5000; // tiempo de espera de 5 segundos
+    int waitTime = 4000; // tiempo de espera de 4 segundos
     long startTimer = millis();
     boolean state = false;
 
@@ -880,8 +903,8 @@ String TomarFoto(bool x = false)
 
     for (uint8_t i = 0; i < 2; i++)
     {
-      if (usuarios[i].estado || solicFot[i])
-        bot.sendMessage(String(usuarios[i].id), "Hubo un error de la API o de la camara.", "");
+      if (invAct(i) && usuarios[i].estado || solicFot[i])
+        bot.sendMessage(String(usuarios[i].id), "Error de API o camara.", "");
     }
   }
   solicFot[0] = false;
@@ -889,6 +912,7 @@ String TomarFoto(bool x = false)
   return getBody;
 }
 
+// Comandos Telegram
 void botTelegram(int newMsj)
 {
   for (int i = 0; i < newMsj; i++)
@@ -903,7 +927,7 @@ void botTelegram(int newMsj)
     {
       usrAct = 0;
     }
-    else if (chat_id.equals(String(usuarios[1].id)))
+    else if (chat_id.equals(String(usuarios[1].id)) && invAct(1))
     {
       usrAct = 1;
     }
@@ -927,7 +951,6 @@ void botTelegram(int newMsj)
     {
       ultimoMsjBot = bot.messages[0].message_id;
       bot.sendMessage(chat_id, estadoAct(usrAct), "");
-      // bot.sendMessage(usuarios[0].id, String(ESP.getHeapSize() / 1024) + " - " + String(ESP.getFreeHeap() / 1024), "");
       continue;
     }
 
@@ -940,7 +963,7 @@ void botTelegram(int newMsj)
       }
 
       usuarios[usrAct].estado = !usuarios[usrAct].estado;
-      usrActivo = (usuarios[0].estado || usuarios[1].estado) ? true : false;
+      usrActivo = usuarios[0].estado || usuarios[1].estado;
 
       memoria.begin("memory", false);
       memoria.putBytes("users", usuarios, sizeof(usuarios));
@@ -977,7 +1000,10 @@ void botTelegram(int newMsj)
         delay(1);
         for (uint8_t i = 0; i < 2; i++)
         {
-          bot.sendMessageWithReplyKeyboard(usuarios[i].id, "Equipo APAGADO 🖥️", "", estadoMenu(i), true);
+          if (strlen(usuarios[i].id) > 9 && invAct(i))
+          {
+            bot.sendMessageWithReplyKeyboard(usuarios[i].id, "Equipo APAGADO 🖥️", "", estadoMenu(i), true);
+          }
         }
         mod_apagado(600);
       }
@@ -985,7 +1011,7 @@ void botTelegram(int newMsj)
       {
         for (uint8_t i = 0; i < 2; i++)
         {
-          if (strlen(usuarios[i].id) > 9)
+          if (strlen(usuarios[i].id) > 9 && invAct(i))
           {
             bot.sendMessageWithReplyKeyboard(usuarios[i].id, "Equipo ENCENDIDO 🖥️", "", estadoMenu(i), true);
           }
@@ -1032,9 +1058,12 @@ void botTelegram(int newMsj)
       {
         setBool("apagadMan", apagadoMan = false);
         ultimoMsjBot = bot.messages[0].message_id;
+        setInt("ultMsj", ultimoMsjBot);
+        delay(100);
+
         for (uint8_t i = 0; i < 2; i++)
         {
-          if (strlen(usuarios[i].id) > 9)
+          if (strlen(usuarios[i].id) > 9 && invAct(i))
           {
             bot.sendMessageWithReplyKeyboard(usuarios[i].id, "Modo DORMIR activado 🌙", "", x, true);
             bot.sendMessage(usuarios[i].id, "Durmiendo.. 😴", "");
@@ -1044,8 +1073,13 @@ void botTelegram(int newMsj)
       }
       else
       {
-        bot.sendMessageWithReplyKeyboard(usuarios[usrAct].id, "Modo DESPIERTO activado ☀️", "", x, true);
-        bot.sendMessageWithReplyKeyboard(usuarios[!usrAct].id, "Modo DESPIERTO activado ☀️", "", x, true);
+        for (uint8_t i = 0; i < 2; i++)
+        {
+          if (strlen(usuarios[i].id) > 9 && invAct(i))
+          {
+            bot.sendMessageWithReplyKeyboard(usuarios[i].id, "Modo DESPIERTO activado ☀️", "", x, true);
+          }
+        }
       }
       continue;
     }
@@ -1066,6 +1100,7 @@ void botTelegram(int newMsj)
       {
         setBool("config", true);
         ultimoMsjBot = bot.messages[0].message_id;
+        setInt("ultMsj", ultimoMsjBot);
         bot.sendMessage(chat_id, "Reiniciando... ⬇️\n\n⚙ Ingresar al Punto de Acceso: http://192.168.4.1 \n- WiFi: " + String(hostname) + "\n- Pass: " + String(hostpass), "");
         delay(1000);
         ESP.restart();
@@ -1086,7 +1121,7 @@ void botTelegram(int newMsj)
 
       for (uint8_t i = 0; i < 2; i++)
       {
-        if (strlen(usuarios[i].id) > 9)
+        if (strlen(usuarios[i].id) > 9 && invAct(i))
         {
           bot.sendMessage(usuarios[i].id, txt, "");
         }
@@ -1110,7 +1145,6 @@ void botTelegram(int newMsj)
       String result = String(hostname);
       result.toLowerCase();
       bot.sendMessage(chat_id, "Transmision disponible 📽️\n- Abrir: http://" + result + ".local", "");
-      bot.sendMessage(usuarios[!usrAct].id, "TRANSMISION DE VIDEO EN CURSO 📽️", "");
       continue;
     }
 
@@ -1126,7 +1160,10 @@ void botTelegram(int newMsj)
       stream_active = !stream_active;
       stopCameraServer();
       bot.sendMessage(chat_id, "Deteniendo...\nTransmision de video terminada 📡", "");
-      bot.sendMessage(usuarios[!usrAct].id, "TRANSMISION DE VIDEO TERMINADA 📽️", "");
+      if (strlen(usuarios[!usrAct].id) > 9 && invAct(i))
+      {
+        bot.sendMessage(usuarios[!usrAct].id, "TRANSMISION DE VIDEO TERMINADA 📽️", "");
+      }
       continue;
     }
 
@@ -1139,14 +1176,35 @@ void botTelegram(int newMsj)
       continue;
     }
 
+    if (strcmp(text, "/estadoInv") == 0)
+    {
+      if (usrAct == 0)
+      {
+        ultimoMsjBot = bot.messages[0].message_id;
+        invitadActive = !invitadActive;
+        setBool("invActive", invitadActive);
+
+        String txt = invitadActive ? "Invitado ACTIVO ✅" : "Invitado DESACTIVADO ❌";
+        bot.sendMessage(chat_id, txt);
+        continue;
+      }
+      else
+      {
+        bot.sendMessage(chat_id, "No permitido", "");
+        continue;
+      }
+    }
+
 #if OTA
     if (strcmp(text, "/configOTA") == 0)
     {
       ultimoMsjBot = bot.messages[0].message_id;
+
       if (usrAct == 0)
       {
         setBool("funcOta", true);
         bot.sendMessage(usuarios[0].id, "Reiniciando... ⬇", "");
+        setInt("ultMsj", ultimoMsjBot);
         delay(1000);
         ESP.restart();
       }
@@ -1161,11 +1219,28 @@ void botTelegram(int newMsj)
     if (strcmp(text, "/reiniciar") == 0)
     {
       ultimoMsjBot = bot.messages[0].message_id;
+      setInt("ultMsj", ultimoMsjBot);
       bot.sendMessage(chat_id, "Reiniciando... ⬇", "");
       delay(1000);
       ESP.restart();
       continue;
     }
+
+    // Pruebas
+    char comm[4];
+    strncpy(comm, text, 3);
+    comm[3] = '\0';
+
+    if (strcmp(comm, "#01") == 0 && usrAct == 0)
+    {
+      char p2[10];
+      strcpy(p2, text + 3);
+      FPS_VIDEO = atoi(p2);
+      ultimoMsjBot = bot.messages[0].message_id;
+      bot.sendMessage(chat_id, "Nueva conf: " + String(FPS_VIDEO) + "FPS");
+      continue;
+    }
+
     bot.sendMessage(chat_id, "Comando desconocido 👨‍🔧");
   }
 }
@@ -1177,7 +1252,7 @@ void sensorMovimientoFijo()
   static unsigned long tAntMov = millis();
   if (digitalRead(pinPir) && !movimiento)
   {
-    // Serial.println(F("MOVIMIENTO DETECTADO!"));
+    Serial.println(F("MOVIMIENTO DETECTADO!"));
     movimiento = true;
     alertMov = true;
     enviarFoto = true;
@@ -1211,7 +1286,7 @@ void sensorMovimientoFijo()
           String msj = "Fin del movimiento: " + String(t) + " Seg.";
           for (uint8_t i = 0; i < 2; i++)
           {
-            if (usuarios[i].estado)
+            if (usuarios[i].estado && invAct(i))
             {
               bot.sendMessage(usuarios[i].id, msj, "");
             }
@@ -1268,7 +1343,7 @@ void sensorMovimientoAuto()
         String msj = "Fin del movimiento: " + String(t) + " Seg.";
         for (uint8_t i = 0; i < 2; i++)
         {
-          if (usuarios[i].estado)
+          if (usuarios[i].estado && invAct(i))
           {
             bot.sendMessage(usuarios[i].id, msj, "");
           }
@@ -1327,7 +1402,7 @@ int bateria(double vol)
   {
     for (uint8_t i = 0; i < 2; i++)
     {
-      if (usuarios[i].estado)
+      if (usuarios[i].estado && invAct(i))
       {
         bot.sendMessage(usuarios[i].id, "BATERIA BAJA " + String(bat) + "% 🪫", "");
       }
@@ -1338,12 +1413,12 @@ int bateria(double vol)
 
 void temperatura()
 {
-  float temp = temperatureRead();
-  if (temp > 110)
+  float temp = (temprature_sens_read() - 32) / 1.8;
+  if (temp > 115)
   {
     for (uint8_t i = 0; i < 2; i++)
     {
-      if (strlen(usuarios[i].id) > 9)
+      if (strlen(usuarios[i].id) > 9 && invAct(i))
       {
         bot.sendMessage(usuarios[i].id, "⚠️ Temperatura: " + String(temp) + "°C", "");
       }
@@ -1383,6 +1458,8 @@ String estadoAct(bool n)
   msj += "🌡️ -Temperatura: " + String(temperatureRead()) + "°C.\n";
   msj += "🛜 -Señal de red:  " + String(WiFi.RSSI()) + " dBm.\n";
   msj += fuent;
+  msj += "👨‍🦱 -Invitado: ";
+  msj += invitadActive ? " ON✅\n" : "OFF❌\n";
 
   if (stream_active)
   {
@@ -1459,16 +1536,15 @@ void setup()
   configCamara();
 
   uint8_t n = 0;
-  String h;
+  String h, txt;
   esp_sleep_wakeup_cause_t causaReset = esp_sleep_get_wakeup_cause(); // función en el ESP32 que permite verificar la causa que despertó al dispositivo
   switch (causaReset)
   {
   case ESP_SLEEP_WAKEUP_TIMER: // ----------------------TEMPORIZADOR APAGADO
-    // bot.sendMessage(usuarios[0].id, "Despertado", "");
     for (uint8_t i = 0; i < 5; i++)
     {
       nuevosMsj();
-      delay(1000);
+      delay(700);
     }
 
     if (apagadoAuto && (hActual().substring(0, 2).toInt() == hEncAut) && !apagadoMan)
@@ -1476,7 +1552,7 @@ void setup()
       setBool("estApag", apagado = false);
       for (uint8_t i = 0; i < 2; i++)
       {
-        if (strlen(usuarios[i].id) > 9)
+        if (strlen(usuarios[i].id) > 9 && invAct(i))
         {
           bot.sendMessageWithReplyKeyboard(usuarios[i].id, "Equipo ENCENDIDO AUT.🖥️", "", estadoMenu(i), true);
         }
@@ -1497,11 +1573,12 @@ void setup()
       (apagadoAuto && x && !apagadoMan) ? mod_apagado(3680) : mod_apagado(600);
     }
 
+    txt = eventosError();
     for (uint8_t i = 0; i < 2; i++)
     {
-      if (strlen(usuarios[i].id) > 9)
+      if (strlen(usuarios[i].id) > 9 && invAct(i))
       {
-        bot.sendMessage(usuarios[i].id, bienv2, "");
+        bot.sendMessage(usuarios[i].id, bienv2 + txt, "");
       }
     }
     bateria(voltaje());
@@ -1514,7 +1591,7 @@ void setup()
     bateria(voltaje());
     delay(1000);
 
-    while (n < 10)
+    while (n < 15)
     {
       nuevosMsj();
       delay(1000);
@@ -1529,11 +1606,13 @@ void setup()
     {
       mod_dormir();
     }
+
+    txt = eventosError();
     for (uint8_t i = 0; i < 2; i++)
     {
-      if (strlen(usuarios[i].id) > 9)
+      if (strlen(usuarios[i].id) > 9 && invAct(i))
       {
-        bot.sendMessage(usuarios[i].id, bienv2, "");
+        bot.sendMessage(usuarios[i].id, bienv2 + txt, "");
       }
     }
     break;
@@ -1542,7 +1621,7 @@ void setup()
     Serial.print(F("Calibrando sensor SENSOR, esperar 5 seg. ->"));
     for (uint8_t i = 0; i < 2; i++)
     {
-      if (strlen(usuarios[i].id) > 9)
+      if (strlen(usuarios[i].id) > 9 && invAct(i))
       {
         bot.sendMessage(usuarios[i].id, "BIENVENIDO 👋\nCalibrando SENSOR, esperar 5 seg...⏳", "");
       }
@@ -1551,7 +1630,7 @@ void setup()
     for (uint8_t i = 0; i < 10; i++)
     {
       alertaLED();
-      delay(600);
+      delay(500); // retardo
     }
     digitalWrite(pinLed, LOW);
 
@@ -1561,10 +1640,10 @@ void setup()
     setBool("modDormir", modAhorro = false);
     nuevosMsj(false);
 
-    String txt = eventosError();
+    txt = eventosError();
     for (uint8_t i = 0; i < 2; i++)
     {
-      if (strlen(usuarios[i].id) > 9)
+      if (strlen(usuarios[i].id) > 9 && invAct(i))
       {
         bot.sendMessageWithReplyKeyboard(usuarios[i].id, (estadoAct(i) + txt), "", estadoMenu(i), true);
       }
@@ -1583,6 +1662,9 @@ void setup()
 #endif
   tAntMensaj = millis();
   tAntBat = millis();
+
+  startCameraServer();
+  stream_active = true;
 }
 
 void loop()
@@ -1652,3 +1734,22 @@ void resetNVC()
     ;
 }
 #endif
+
+bool invAct(int i)
+{
+  if (i == 0)
+  {
+    return true;
+  }
+  else
+  {
+    if (invitadActive)
+    {
+      return true;
+    }
+    else
+    {
+      return false;
+    }
+  }
+}
