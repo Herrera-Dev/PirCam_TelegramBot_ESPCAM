@@ -4,6 +4,8 @@
 #define RESET_NVC 0    // Limpiar la memoria NVC.
 #define DEPURACION_T 0 // Depurar por telnet.
 #define OTA 1          // Actualizacion por OTA
+#define CALIB_PIR 1    // Esperar unos segundos para que el sensor pir se calibre.
+#define INICIAR_VID 1  // Iniciar video al arrancar.
 
 #include <nvs_flash.h>
 #if WDT
@@ -79,6 +81,12 @@ struct users
   bool estado;
 };
 
+char ip[16] = "0.0.0.0";
+char Gateway[16] = "0.0.0.0";
+char Mask[16] = "0.0.0.0";
+char dns1[16] = "8.8.8.8";
+char dns2[16] = "8.8.4.4";
+
 char token[50] = "vacio";
 users usuarios[2] = {{"0", "Adm", false}, {"0", "Inv", false}};
 bool solicFot[2] = {false, false};
@@ -130,6 +138,10 @@ void getDatos()
   invitadActive = memoria.getBool("invActive", false);
   ultimoMsjBot = memoria.getInt("ultMsj", 0);
 
+  memoria.getBytes("sIp", ip, sizeof(ip));
+  memoria.getBytes("sGat", Gateway, sizeof(Gateway));
+  memoria.getBytes("sSub", Mask, sizeof(Mask));
+
   memoria.getBytes("tkn", token, sizeof(token));
   size_t peopleSize = memoria.getBytes("users", usuarios, sizeof(usuarios));
   delay(10);
@@ -141,11 +153,16 @@ void getDatos()
     errorRes += "E: Cargar datos.";
     for (uint8_t i = 0; i < 254; i++)
     {
-      delay(100);
-      alertaLED();
+      for (uint8_t i = 0; i < 2; i++)
+      {
+        digitalWrite(pinLed, HIGH);
+        delay(100);
+        alertaLED();
+      }
+      delay(2400);
     }
-    digitalWrite(pinLed, LOW);
   }
+
   usrActivo = usuarios[0].estado || usuarios[1].estado;
 }
 void setString(const char *err)
@@ -236,19 +253,31 @@ void confWifiManager()
   WiFiManagerParameter nuevoInv("Invitado", "ID Invitado", usuarios[1].id, sizeof(usuarios[1].id));
   const String n = "<p style='color: red; text-align: center;'>" + errorRes + "</p>";
   WiFiManagerParameter customMessage(n.c_str());
+
+  WiFiManagerParameter nIp("IP", "IP estatica", ip, sizeof(ip));
+  WiFiManagerParameter nGat("Gateway", "Gateway", Gateway, sizeof(Gateway));
+  WiFiManagerParameter nSub("Mask", "Mask", Mask, sizeof(Mask));
+
   wm.addParameter(&nuevoToken);
   wm.addParameter(&nuevoAdm);
   wm.addParameter(&nuevoInv);
   wm.addParameter(&customMessage);
 
-  // wm.setShowDnsFields(true);
-  // wm.setShowInfoErase(false);
+  wm.addParameter(&nIp);
+  wm.addParameter(&nGat);
+  wm.addParameter(&nSub);
+
+  // wm.setShowInfoErase(true;
   wm.setBreakAfterConfig(true); // Guardar a un que las credenciales wifi sean incorrectas.
   wm.setConfigPortalTimeout(180);
   wm.setConnectTimeout(10);
+
   wm.startConfigPortal(hostname, hostpass);
 
   Serial.println(F("CONFIGURACION TERMINADO"));
+  strncpy(ip, nIp.getValue(), sizeof(ip));
+  strncpy(Gateway, nGat.getValue(), sizeof(Gateway));
+  strncpy(Mask, nSub.getValue(), sizeof(Mask));
   strncpy(token, nuevoToken.getValue(), sizeof(token));
   strncpy(usuarios[0].id, nuevoAdm.getValue(), sizeof(usuarios[0].id));
   strncpy(usuarios[1].id, nuevoInv.getValue(), sizeof(usuarios[1].id));
@@ -268,6 +297,9 @@ void confWifiManager()
   }
 
   memoria.begin("memory", false);
+  memoria.putBytes("sIp", ip, sizeof(ip));
+  memoria.putBytes("sGat", Gateway, sizeof(Gateway));
+  memoria.putBytes("sSub", Mask, sizeof(Mask));
   memoria.putBytes("tkn", token, sizeof(token));
   memoria.putBytes("users", usuarios, sizeof(usuarios));
   memoria.end();
@@ -296,8 +328,30 @@ void configInicio()
   wm.setConfigPortalTimeout(3);
   // wm.resetSettings();
 
+  if (strlen(ip) > 7 && String(ip) != "0.0.0.0" && !funcOTA)
+  {
+    IPAddress staticIp, staticGateway, staticMask;
+    staticIp.fromString(ip);
+    staticGateway.fromString(Gateway);
+    staticMask.fromString(Mask);
+    wm.setSTAStaticIPConfig(staticIp, staticGateway, staticMask);
+  }
+
   if (wm.autoConnect())
   {
+    WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(), IPAddress(8, 8, 8, 8), IPAddress(8, 8, 4, 4));
+
+    Serial.print(F("Gateway: "));
+    Serial.println(WiFi.gatewayIP());
+    Serial.print(F("Mask: "));
+    Serial.println(WiFi.subnetMask());
+    Serial.print(F("MAC: "));
+    Serial.println(WiFi.macAddress());
+    Serial.print(F("DNS 1: "));
+    Serial.println(WiFi.dnsIP(0));
+    Serial.print(F("DNS 2: "));
+    Serial.println(WiFi.dnsIP(1));
+
     bot.updateToken(token);
     clientTCP.setCACert(TELEGRAM_CERTIFICATE_ROOT);
     delay(2000);
@@ -309,7 +363,7 @@ void configInicio()
       {
         if (errorRes.length() < 60)
         {
-          errorRes += " E: Conexion a Internet, API.\n";
+          errorRes += " E: Conexion a Internet o API.\n";
           setString(errorRes.c_str());
         }
         setBool("config", true);
@@ -324,10 +378,7 @@ void configInicio()
     // Iniciar mDNS
     if (MDNS.begin(hostname))
     {
-      Serial.print("mDNS iniciado");
-      Serial.print(": http://");
-      Serial.print(hostname);
-      Serial.println(F(".local"));
+      Serial.print("mDNS iniciado: http://" + String(hostname) + ".local\n");
     }
     else
     {
@@ -363,15 +414,17 @@ void configInicio()
 #if OTA
   if (funcOTA)
   {
-    Serial.println(F("FUNCION OTA DISPONIBLE"));
-    InitOTA();
     setBool("funcOta", false);
+    digitalWrite(pinLed, HIGH);
+    InitOTA();
+
     bot.sendMessage(usuarios[0].id, "Actualizacion por OTA habilitado. ⚙\n- IP: " + WiFi.localIP().toString() + "\n- Pass: " + String(hostpass), "");
     while (true)
     {
       ArduinoOTA.handle();
       delay(10);
     }
+    digitalWrite(pinLed, LOW);
   }
 #endif
   delay(100);
@@ -1145,7 +1198,7 @@ void botTelegram(int newMsj)
       }
 
       ultimoMsjBot = bot.messages[0].message_id;
-      stream_active = !stream_active;
+      stream_active = true;
       bot.sendMessage(chat_id, "Iniciando servidor, espere...", "");
       startCameraServer();
       delay(2000);
@@ -1164,10 +1217,10 @@ void botTelegram(int newMsj)
       }
 
       ultimoMsjBot = bot.messages[0].message_id;
-      stream_active = !stream_active;
+      stream_active = false;
       stopCameraServer();
       bot.sendMessage(chat_id, "Deteniendo...\nTransmision de video terminada 📡", "");
-      if (strlen(usuarios[!usrAct].id) > 9 && invAct(i))
+      if (strlen(usuarios[!usrAct].id) > 9 && invAct(1))
       {
         bot.sendMessage(usuarios[!usrAct].id, "TRANSMISION DE VIDEO TERMINADA 📽️", "");
       }
@@ -1219,7 +1272,7 @@ void botTelegram(int newMsj)
     }
 
 #if OTA
-    if (strcmp(text, "/configOTA") == 0)
+    if (strcmp(text, "/updateOTA") == 0)
     {
       ultimoMsjBot = bot.messages[0].message_id;
 
@@ -1500,6 +1553,7 @@ String estadoAct(bool n)
   msj += invitadActive ? " ON✅\n" : "OFF❌\n";
   msj += "🌡️ -Temperatura: " + String(temperatureRead()) + "°C.\n";
   msj += "🛜 -SSID: " + String(WiFi.SSID()) + "\n";
+  msj += "📍- IP local: " + String(WiFi.localIP().toString()) + "\n";
   msj += "📶 -Señal de red:  " + String(WiFi.RSSI()) + " dBm.\n";
   msj += fuent + "\n";
 
@@ -1665,132 +1719,138 @@ void setup()
     {
       if (strlen(usuarios[i].id) > 9 && invAct(i))
       {
+#if CALIB_PIR
         bot.sendMessage(usuarios[i].id, "BIENVENIDO 👋\nCalibrando SENSOR, esperar 5 seg...⏳", "");
-        // bot.sendMessage(usuarios[i].id, "BIENVENIDO 👋", "");
+#else
+        bot.sendMessage(usuarios[i].id, "BIENVENIDO 👋", "");
       }
     }
+#endif
 
-    for (uint8_t i = 0; i < 10; i++)
-    {
-      alertaLED();
-      delay(500); // retardo
-    }
-    digitalWrite(pinLed, LOW);
+#if CALIB_PIR
+        for (uint8_t i = 0; i < 10; i++)
+        {
+          alertaLED();
+          delay(500); // retardo
+        }
+        digitalWrite(pinLed, LOW);
+#endif
+        Serial.println(F(" Listo."));
+        setBool("estApag", apagado = false);
+        setBool("apagadMan", apagadoMan = false);
+        setBool("modDormir", modAhorro = false);
+        nuevosMsj(false);
 
-    Serial.println(F(" Listo."));
-    setBool("estApag", apagado = false);
-    setBool("apagadMan", apagadoMan = false);
-    setBool("modDormir", modAhorro = false);
-    nuevosMsj(false);
-
-    txt = eventosError();
-    for (uint8_t i = 0; i < 2; i++)
-    {
-      if (strlen(usuarios[i].id) > 9 && invAct(i))
-      {
-        bot.sendMessageWithReplyKeyboard(usuarios[i].id, (estadoAct(i) + txt), "", estadoMenu(i), true);
+        txt = eventosError();
+        for (uint8_t i = 0; i < 2; i++)
+        {
+          if (strlen(usuarios[i].id) > 9 && invAct(i))
+          {
+            bot.sendMessageWithReplyKeyboard(usuarios[i].id, (estadoAct(i) + txt), "", estadoMenu(i), true);
+          }
+        }
+        break;
       }
-    }
-    break;
-  }
-  bateria(voltaje());
+      bateria(voltaje());
 
 #if WDT
-  iniciar_WDT();
+      iniciar_WDT();
 #endif
 
 #if DEPURACION_T
-  MDNS.addService("telnet", "tcp", 23);
-  TelnetStream.begin();
+      MDNS.addService("telnet", "tcp", 23);
+      TelnetStream.begin();
 #endif
-  tAntMensaj = millis();
-  tAntBat = millis();
+      tAntMensaj = millis();
+      tAntBat = millis();
 
-  startCameraServer();
-  stream_active = true;
-}
-
-void loop()
-{
-#if WDT
-  esp_task_wdt_reset();
+#if INICIAR_VID
+      startCameraServer();
+      stream_active = true;
 #endif
-  if (enviarFoto)
-  {
-    if (usrActivo || solicFot[0] || solicFot[1])
-    {
-      TomarFoto();
-      enviarFoto = false;
     }
-  }
-  nuevosMsj();
+
+    void loop()
+    {
+#if WDT
+      esp_task_wdt_reset();
+#endif
+      if (enviarFoto)
+      {
+        if (usrActivo || solicFot[0] || solicFot[1])
+        {
+          TomarFoto();
+          enviarFoto = false;
+        }
+      }
+      nuevosMsj();
 #if TIEMP_MOV_F
-  usrActivo ? sensorMovimientoFijo() : (void)0;
+      usrActivo ? sensorMovimientoFijo() : (void)0;
 #else
   usrActivo ? sensorMovimientoAuto() : (void)0;
 #endif
 
-  if ((millis() - tAntBat) > 180000) // 3 min.
-  {
-    WiFiClient client;
-    if (!client.connect("www.google.com", 80))
-    {
-      if (desc > 2 && !stream_active)
+      if ((millis() - tAntBat) > 180000) // 3 min.
       {
-        // Serial.println(F("Perdida de conexion."));
-        setString("E: Perdida de conexion.\n");
-        delay(1000);
-        ESP.restart();
+        WiFiClient client;
+        if (!client.connect("www.google.com", 80))
+        {
+          if (desc > 2 && !stream_active)
+          {
+            // Serial.println(F("Perdida de conexion."));
+            setString("E: Perdida de conexion.\n");
+            delay(1000);
+            ESP.restart();
+          }
+          desc++;
+          WiFi.reconnect();
+        }
+        else
+        {
+          client.stop();
+          desc = 0;
+        }
+        apaAutomat();
+        temperatura();
+        bateria(voltaje());
+        tAntBat = millis();
       }
-      desc++;
-      WiFi.reconnect();
+      delay(40);
     }
-    else
-    {
-      client.stop();
-      desc = 0;
-    }
-    apaAutomat();
-    temperatura();
-    bateria(voltaje());
-    tAntBat = millis();
-  }
-  delay(40);
-}
 
 // -------------------------------
 #if DEPURACION_T
-void EnviarTelnet(String txt)
-{
-  TelnetStream.print(txt);
-  TelnetStream.println();
-}
+    void EnviarTelnet(String txt)
+    {
+      TelnetStream.print(txt);
+      TelnetStream.println();
+    }
 #endif
 
-void resetNVC()
-{
-  // LIMPIAR LA MEMORIA NVS
-  nvs_flash_erase();
-  nvs_flash_init();
-  while (true)
-    ;
-}
+    void resetNVC()
+    {
+      // LIMPIAR LA MEMORIA NVS
+      nvs_flash_erase();
+      nvs_flash_init();
+      while (true)
+        ;
+    }
 
-bool invAct(int i)
-{
-  if (i == 0)
-  {
-    return true;
-  }
-  else
-  {
-    if (invitadActive)
+    bool invAct(int i)
     {
-      return true;
+      if (i == 0)
+      {
+        return true;
+      }
+      else
+      {
+        if (invitadActive)
+        {
+          return true;
+        }
+        else
+        {
+          return false;
+        }
+      }
     }
-    else
-    {
-      return false;
-    }
-  }
-}

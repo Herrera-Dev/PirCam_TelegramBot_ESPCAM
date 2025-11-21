@@ -26,7 +26,7 @@ def resolve_mdns(hostname):
 def buscar_ip(mdns):
     print(f"\n------------------------------")
     print(f"🔍 Buscando ESP32-CAM...")
-    ip = "192.168.1.7"
+    ip = resolve_mdns(mdns)
     while ip is None:
         ip = resolve_mdns(mdns)
         print(f"❌ No se encontró el dispositivo.")

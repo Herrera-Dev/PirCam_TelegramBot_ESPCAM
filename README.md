@@ -83,26 +83,27 @@ void loop() {
 
 | **Comando**                        | **Descripción** |
 |-----------------------------------|-----------------|
-| `/estado`                         | Muestra el estado del sistema: <ul><li>Hora actual y número de usuarios en vigilancia</li><li>Estado del dispositivo (ON/OFF)</li><li>Modo vigilancia (ON/OFF)</li><li>Modo ahorro de energía (ON/OFF)</li><li>Alerta de duración del movimiento (ON/OFF)</li><li>Apagado automático (ON/OFF)</li><li>Temperatura interna *(SENSOR INTERNO NO CONFIABLE)*</li><li>Intensidad de la señal WiFi</li><li>Tipo de alimentación (externa o batería)</li></ul> |
+| `/estado`                         | Muestra el estado del sistema: <ul><li>Hora actual y número de usuarios en vigilancia</li><li>Estado del dispositivo (ON/OFF)</li><li>Modo vigilancia (ON/OFF)</li><li>Modo ahorro de energía (ON/OFF)</li><li>Alerta de duración del movimiento (ON/OFF)</li><li>Apagado automático NOCHES (ON/OFF)</li><li>Alerta de bot lento (ON/OFF)</li><li>Estado del usuario invitado (ON/OFF)</li><li>Temperatura interna *(SENSOR INTERNO NO CONFIABLE)*</li><li>ssid e ip de la red</li><li>Intensidad de la señal WiFi</li><li>Tipo de alimentación (externa o batería)</li></ul> |
 | `/VIGILAR` / `/NO-VIGILAR`        | Activa o desactiva el modo vigilancia. Envía foto al detectar movimiento. |
 | `/foto`                           | Solicita una foto en cualquier momento. |
 | `/APAGAR` / `/ENCENDER`           | Apaga o enciende el dispositivo. Usa *deep sleep* al apagarse. |
 | `/modDormido` / `/modDespierto`   | Activa o desactiva el modo ahorro de energía (deep sleep con PIR). |
 | `/iniciarVideo` / `/pararVideo`   | Iniciar o detener la transmisión de video a través de su red local: [http://espcam-bot.local](http://espcam-bot.local) --> [VER IMAGEN](imagenes/Screenshot_5.jpg)|
 |`estadoInv`                        | Activar o encender el segundo usuario. |
-| `/comandos`                       | Muestra comandos adicionales y alerta LED:<ul><li>`/alertDura`: ON/OFF – LED se mantiene encendido con movimiento.</li><li>`/apagAuto`: ON/OFF – Apagado automático nocturno.</li><li>`/configOTA`: Activar OTA (solo admin).</li><li>`/configDatos`: Reinicia para reconfigurar con WiFiManager (solo admin).</li><li>`/reiniciar`: Reinicia la ESP32-CAM.</li></ul> |
+| `/comandos`                       | Muestra comandos adicionales y alerta LED:<ul><li>`/alertDura`: ON/OFF – LED se mantiene encendido con movimiento.</li><li>`/apagAuto`: ON/OFF – Apagado automático nocturno.</li><li>`/updateOTA`: Activar OTA (solo admin).</li><li>`/configDatos`: Reinicia para reconfigurar con WiFiManager (solo admin).</li><li>`/reiniciar`: Reinicia la ESP32-CAM.</li></ul> |
 
-  ```c
-  💡 INFORMACION DEL LED
-  - Parpadeo_Rapido: Esta en modo configuración o error de acceso a la memoria.
-  - Parpadeo_Normal: Calibrando sensor luego de iniciar.
-  - Un Parpadeo: Captura una foto.
-  - Encendido: Cuando se detecta movimiento (solo si esta activado la opcion `/alertDura`).
+  ```txt
+  💡 INFORMACIÓN DEL LED
+  - Parpadeo_Rapido: Esta en modo config. de creden.
+  - Parpadeo_Normal: Calibrando sensor al iniciar.
+  - Un_Parpadeo: Captura una foto.
+  - Dos_Parpadeos: Error de acceso a la memoria.
+  - Encendido: actualizacion OTA o duracion del mov. detectado (solo si esta activado la opcion).
   ```
 
 - **Alerta de batería**: Notificar si la batería baja por debajo del 15% cuando se esta usando la batería como fuente de alimentacion.
 - **Lentitud con el bot**: Cuando esta en modo-vigilar notificar si el bot tarda en verificar la existencia de nuevos mensajes y eso genera un retraso en cada interacción.
-- **Sobrecalentamiento**: Notificar cuando el sensor interno de temperatura alcance un umbral definido, (**CABE ACLARAR QUE EL SENSOR INTERNO DE ESTA ESP32 NO ES CONFIABLE**) recomendación usar usar un sensor externo.
+- **Sobrecalentamiento**: Notificar cuando el sensor interno de temperatura alcance un umbral definido, (**CABE ACLARAR QUE EL SENSOR INTERNO DE ESTA BOARD NO ES CONFIABLE**) recomendación usar un sensor externo.
 > ⚠️ Las mensajes de posible fallo se muestra en los **mensajes de bienvenida** o en el **portal de WifiManager**.
 
 ### Calidad de imagen y video
@@ -155,7 +156,7 @@ Este script es un servidor proxy en Flask para retransmitir el video de la ESP32
 
    ```
 4. **Acceder al servidor**:
-   - Para acceder, abre [http://localhost:5000](http://localhost:5000) en tu navegador.
+   - Para acceder, abre [http://localhost:5001](http://localhost:5001) en tu navegador.
 
 ## 📱 Play Store app: `TinyCam Monitor`
 [TinyCam Monitor](https://play.google.com/store/apps/details?id=com.alexvas.dvr) funciona excelente si requiere las funciones: `Picture-in-Picture (PiP)`, `Pantalla completa`, `Capturar imagen` y `Grabar video` y ademas contiene funciones de detención de `movimiento`, `personas`, `mascotas` y `vehiculos` pero estos últimos solo disponible en la **version premium**.
