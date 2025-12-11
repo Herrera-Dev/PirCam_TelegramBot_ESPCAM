@@ -1,18 +1,22 @@
-import io, time, socket, subprocess, requests, imagehash, threading, os
+import io, time, socket, subprocess, requests, imagehash, threading, os, json
 from flask import Flask, Response, stream_with_context, render_template
 from datetime import datetime
 from plyer import notification
 from PIL import Image
 
 status = True
-MDNS = "espcam-bot"     # Nombre del host ESPmDNS de la esp32-cam, http://espcam-bot.local
 SOLO_HOST = True        # True: solo desde localhost, False: acceso en toda la red local
+MDNS = "espcam-bot"     # Nombre del host ESPmDNS de la esp32-cam, http://espcam-bot.local
 
-duracion = 60  # Segundos de grabación del video.
-velocidad = 7  # FPS para renderizar el video.
-PauseMov = 15  # Pausar luego de detectar movimiento.
-sensibilMov = 2     # Sensibilidad de movimiento.
-movActivo = True
+duracion = 60        # Segundos de grabación del video.
+velocidad = 7        # FPS para renderizar el video.
+PauseMov = 10        # Pausar luego de detectar movimiento.
+sensibilMov = 2    # Sensibilidad de movimiento. Muy alta: 1-3 | Alta: 4-8 | Media: 9-15 | Baja: 16-30 | Muy baja: 31-64
+detectMov = True
+guardarImg = False
+mostrarImg = False
+
+celdasSelect = []
 
 # -------------------------
 app = Flask(__name__)
@@ -31,24 +35,30 @@ def buscar_ip(mdns):
         ip = resolve_mdns(mdns)
         print(f"❌ No se encontró el dispositivo.")
         time.sleep(4)
-    print(f"🌐 Abrir: http://localhost:5000")
+    print(f"🌐 Abrir: http://localhost:5001")
     print(f"🏠 Solo localHost: {SOLO_HOST}")
     return ip
+ESP32_IP = buscar_ip(MDNS)
 
 def mostrarImagen_wmctrl(imagen, duracion):
     def _mostrar():
         ver = subprocess.Popen(['xdg-open', imagen])
         time.sleep(duracion)
 
-        titulo_ventana = imagen.split('/')[-1]  # usa el nombre del archivo como título
+        titulo_ventana = imagen.split('/')[-1]
         try:
             subprocess.run(['wmctrl', '-c', titulo_ventana], check=True)
         except subprocess.CalledProcessError:
-            #print("⚠️ No se pudo cerrar la ventana (quizás el título no coincide).")
+            print("No se pudo cerrar la ventana (quizás el título no coincide).")
             pass
     threading.Thread(target=_mostrar, daemon=True).start()
 
-ESP32_IP = buscar_ip(MDNS)
+def cargarCeldas():
+    ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "celdas.json")
+    with open(ruta, "r") as f:
+        return json.load(f)
+celdasSelect = cargarCeldas()
+last_hash_celdas = { c["id"]: None for c in celdasSelect }  
 
 # -------------------------
 @app.route("/")
@@ -60,10 +70,9 @@ def index():
 def proxy_mjpeg():
     def generate(status):
         last_data_time = time.time()
-        last_hash = None
+        cooldown = time.time()
         buffer = b""
-        cooldown = 0
-        hora_actual = None              
+        hora_actual = None 
 
         while True:
             try:
@@ -77,7 +86,7 @@ def proxy_mjpeg():
                     for chunk in r.iter_content(chunk_size=1024):
                         if not chunk:
                             if time.time() - last_data_time > 5:
-                                raise RuntimeError("ESP32-CAM no está enviando datos")
+                                raise RuntimeError("No se recibe de la ESP32-CAM")
                             continue
 
                         buffer += chunk
@@ -92,24 +101,51 @@ def proxy_mjpeg():
                             buffer = buffer[end + 2:]
 
                             try:
-                                img = Image.open(io.BytesIO(frame_data)).convert("L")
-                                current_hash = imagehash.phash(img)
+                                img_color = Image.open(io.BytesIO(frame_data))
+                                img_gray = img_color.convert("L")
+                                combined_region = Image.new("L", img_gray.size, 0)
 
-                                if last_hash is not None:
-                                    diff = abs(current_hash - last_hash)
-                                    if diff > sensibilMov and (time.time() - cooldown > PauseMov) and movActivo:
-                                        hora_actual = datetime.now().strftime("%H:%M:%S")
-                                        print(f"[{hora_actual}] - Movimiento detectado 📸")
+                                # Copiar cada celda seleccionada sobre la imagen combinada
+                                for celda in celdasSelect:
+                                    x1, y1, x2, y2 = celda["x1"], celda["y1"], celda["x2"], celda["y2"]
+                                    region = img_gray.crop((x1, y1, x2, y2))
+                                    combined_region.paste(region, (x1, y1))
 
-                                        ruta = "/tmp/mov_esp32cam.jpg"
-                                        img.save(ruta)
-                                        
-                                        notification.notify(title="📸 Movimiento Detectado", message=f"Detectado a las {hora_actual}", timeout=5) #Notificación - Linux
-                                        os.system('paplay /usr/share/sounds/freedesktop/stereo/complete.oga') #Sonido de alerta - Linux
-                                        mostrarImagen_wmctrl(ruta, 4)
+                                # Calcular hash de la región combinada
+                                hash_actual = imagehash.phash(combined_region)
 
-                                        cooldown = time.time() 
-                                last_hash = current_hash
+                                # Comparar con el hash anterior
+                                mov_detectado = False
+                                if last_hash_celdas.get("combined") is not None:
+                                    diff = abs(hash_actual - last_hash_celdas["combined"])
+                                    if diff > sensibilMov and (time.time() - cooldown > PauseMov) and detectMov:
+                                        mov_detectado = True
+
+                                # Guardar hash actual para la siguiente iteración
+                                last_hash_celdas["combined"] = hash_actual
+
+                                if mov_detectado:
+                                    hora_actual = datetime.now().strftime("%H:%M:%S")
+                                    print(f"[{hora_actual}] - Movimiento detectado 📸")
+
+                                    ruta = "/tmp/mov_esp32cam.jpg"
+                                    img_color.save(ruta)
+                                    if guardarImg: 
+                                        horafrm = hora_actual.replace(":", "-")
+                                        ruta_script = os.path.dirname(os.path.abspath(__file__))
+                                        ruta_completa = os.path.join(ruta_script, f"mov_esp32cam-{horafrm}.jpg")
+                                        img_color.save(ruta_completa)
+
+                                    notification.notify(
+                                        title="📸 Movimiento Detectado",
+                                        message=f"Movimiento en el area - {hora_actual}",
+                                        timeout=5
+                                    )
+                                    os.system('paplay /usr/share/sounds/freedesktop/stereo/complete.oga')
+                                    if mostrarImg: mostrarImagen_wmctrl(ruta, 4)
+
+                                    cooldown = time.time()
+                                                            
 
                                 # Enviar frame al cliente
                                 yield (
@@ -140,7 +176,6 @@ def proxy_mjpeg():
                     b"\xda\x00\x08\x01\x01\x00\x00\x3f\x00\xff\xd9"
                     b"\r\n"
                 )
-                # Notificación de escritorio
                 notification.notify(title="❌ Error de video", message=f"Sin conexion...", timeout=5)
                 status = True
                 time.sleep(15)
@@ -207,22 +242,22 @@ def grabar_fragmento():
 
 @app.route('/movimiento/<estado>')
 def movimiento(estado):
-    global movActivo
+    global detectMov
     if estado == 'on':
-        movActivo = True
+        detectMov = True
         print("✅ Notificacion de movimiento: ON")
         return "Detector activado"
     elif estado == 'off':
-        movActivo = False
+        detectMov = False
         print("🛑 Notificacion de movimiento: OFF")
         return "Detector desactivado"
     return "Estado inválido"
 
 @app.route("/movimiento/status")
 def movimiento_status():
-    global movActivo
+    global detectMov
     print("Revisando estado")
-    return {"activo": movActivo}
+    return {"activo": detectMov}
     
 # -------------------------
 if __name__ == "__main__":

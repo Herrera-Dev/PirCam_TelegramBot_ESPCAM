@@ -30,5 +30,8 @@
 # Ignore all local history of files
 .history
 .ionide
+venv
 
-# End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,linux,video
+/visualstudiocode,linux,video,venv
+
+# End of https://www.toptal.com/developers/gitignore/api

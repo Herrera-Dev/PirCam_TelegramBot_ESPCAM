@@ -1,0 +1,7 @@
+pillow
+matplotlib
+requests
+ImageHash
+flask
+plyer
+matplotlib

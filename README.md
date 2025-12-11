@@ -3,7 +3,7 @@
 Consiste en un sistema de monitores de seguridad basado en un **ESP32-CAM**, que interactúa con un bot de **Telegram**. El dispositivo captura fotos usando la cámara integrada y las envía a los usuarios registrados cuando detecta movimiento mediante un sensor PIR. Además de otras funcionalidades controlables a través de Telegram, como activar o desactivar el **modo de vigilancia**, **tomar fotos** bajo demanda, **transmitir video** en su red local o controlar el **modo de ahorro** de energía. 
 - Funciona con una batería 18650 o con alimentación externa pero no es posible usar ambos a la vez.
 - Si solo necesita vigilar con detención de movimiento en su red local no es necesario el **sensor (PIR)** puede detectar el movimiento por **software** con [App TinyCam Monitor](
-  #-play-store-app-tinycam-monitor) o con [Script Proxy_Video_ESP32.py](#%EF%B8%8F-script-proxy_video_esp32py-linux)
+  #-play-store-app-tinycam-monitor) o con [Script Proxy_Video_ESP32_Celdas.py](#%EF%B8%8F-script-proxy_video_esp32py-linux)
 
 > ⚠️ Al encenderse, la ESP32-CAM intenta cargar las configuraciones almacenadas. Si no encuentra el **token del bot**, las **credenciales Wi-Fi** o al menos **un usuario**, entra en modo configuración usando **WiFiManager** para obtener estos datos para obtenerlos.
 
@@ -103,8 +103,8 @@ void loop() {
 
 - **Alerta de batería**: Notificar si la batería baja por debajo del 15% cuando se esta usando la batería como fuente de alimentacion.
 - **Lentitud con el bot**: Cuando esta en modo-vigilar notificar si el bot tarda en verificar la existencia de nuevos mensajes y eso genera un retraso en cada interacción.
-- **Sobrecalentamiento**: Notificar cuando el sensor interno de temperatura alcance un umbral definido, (**CABE ACLARAR QUE EL SENSOR INTERNO DE ESTA BOARD NO ES CONFIABLE**) recomendación usar un sensor externo.
-> ⚠️ Las mensajes de posible fallo se muestra en los **mensajes de bienvenida** o en el **portal de WifiManager**.
+- **Sobrecalentamiento**: Notificar cuando el sensor interno de temperatura alcance un umbral definido, (**CABE ACLARAR QUE EL SENSOR INTERNO DE ESTA BOARD NO ES CONFIABLE**) recomendación usar otro sensor mas confiable.
+> ⚠️ Las mensajes de posibles fallo se muestra en los **mensajes de bienvenida** o en el **portal de WifiManager**.
 
 ### Calidad de imagen y video
 La **calidad de las imagenes** se debe cambiar desde `void configCamara()` **mayor calidad** y **tamaño de imagen** significa mayor consumo electrico y menor rendimiento de la ESP32.
@@ -134,7 +134,7 @@ En caso de realizar modificaciones.
 3. **Eventos**: Si hubo un reinicio inesperado informar las causa o de algun otro problema referido a los datos de inicio.
 4. **Notificaciones**: El sistema envía notificaciones a los usuarios registrados en caso de que la batería baje por debajo del 15%, sobre calentamiento y cuando el sensor PIR detecta movimiento.
 
-## 🖥️ Script `Proxy_Video_ESP32.py` (linux)
+## 🖥️ Script `Proxy_Video_ESP32_Celdas.py` (linux)
 <p align="center"><img src="/imagenes/Screenshot_6.png" alt="Estado 1" width="45%"></p>
 
 Este script es un servidor proxy en Flask para retransmitir el video de la ESP32-CAM a través de una interfaz web personalizado lo cual permite ver el video en `Picture-in-Picture (PiP)`, `Pantalla completa`, `Capturar imagen` y `Grabar video`. Si no requiere estas funciones simplemente ingrese a: [http://espcam-bot.local](http://espcam-bot.local) o a la IP de la esp32-cam. 
@@ -144,18 +144,28 @@ Este script es un servidor proxy en Flask para retransmitir el video de la ESP32
 2. **Instalar las dependencias**:
    Ejecuta el siguiente comando para instalar las librerías necesarias, flask `v3.1.x` y ffmpeg `v4.4.x` para el video:
    ```bash
-   sudo apt install ffmpeg
-   pip install flask pillow requests imagehash plyer
+    sudo apt update
+    sudo apt install python3 python3-full python3-pip python3-dev build-essential libjpeg-dev zlib1g-dev ffmpeg
 
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+   ```
+3. **Seleccionar celdas de movimiento**:
+  Esto es para que el script sepa en que parte del video detectar el movimiento.
+  Ejecutar: 
+   ```bash
+   python3 Seleccionar_Celdas_GUI.py imagen.jpg 12 12
    ```
 
-3. **Ejecutar el script**:
+4. **Ejecutar el script**:
    Inicia el servidor ejecutando el script:
    ```bash
-   python3 Proxy_Video_ESP32.py
-
+   python3 Proxy_Video_ESP32_Celdas.py
    ```
-4. **Acceder al servidor**:
+   Si esta usando un entorno virtual de python podria usar `iniciar_Proxy_Esp32Cam.sh` para agilizar el proceso de inicializar.
+
+5. **Acceder al servidor**:
    - Para acceder, abre [http://localhost:5001](http://localhost:5001) en tu navegador.
 
 ## 📱 Play Store app: `TinyCam Monitor`
@@ -175,8 +185,8 @@ Contiene notificaciones de eventos a través de `correo` y `telegram`.
 
 ## 💡 Consideraciones
 
-- Tener una conexión Wi-Fi estable para interactuar con el bot de Telegram.
-- El modo **deep sleep** es útil cuando se utiliza la batería para prolongar la duracion de la batería pero desde la detencion del movimiento hast que sea enviado hay un retraso mas largo de milisegundos que al no usar el modo deep sleep.
+- Tener una conexión Wi-Fi estable para interactuar con el bot de Telegram caso contrario el bot se hace lento y perder mensajes ademas de sobrecalentarse la esp32 en las transmisiones de video por la red local.
+- El modo **deep sleep** es útil cuando se utiliza la batería para prolongar la duracion de la batería pero desde la detencion del movimiento hasta que sea enviado hay un retraso mas largo de milisegundos que al no usar el modo deep sleep.
 
 
 ## ⚡ Alternar entre fuente externa y bateria
